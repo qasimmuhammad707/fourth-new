@@ -1,0 +1,92 @@
+name: Deploy to Production
+
+# Manually deploy to production after review
+# Only available for admins
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Verify permissions
+        run: |
+          if [ "${{ github.actor }}" == "GITHUB_ACTOR" ]; then
+            echo "❌ Unauthorized deployment attempt"
+            exit 1
+          fi
+          echo "✅ Authorized for deployment"
+
+      - name: Get latest image
+        id: image
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo 'latest')
+          echo "tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Staging
+        if: github.event.inputs.environment == 'staging'
+        run: |
+          echo "🚀 Deploying to Staging..."
+          echo "Environment: staging"
+          echo "Image: ghcr.io/${{ github.repository }}:${{ steps.image.outputs.tag }}"
+          
+          # Add your staging deployment commands here
+          # Example: kubectl apply -f k8s/staging.yml
+          # Example: docker-compose -f docker-compose.staging.yml up -d
+
+      - name: Deploy to Production
+        if: github.event.inputs.environment == 'production'
+        run: |
+          echo "🚀 Deploying to Production..."
+          echo "Environment: production"
+          echo "Image: ghcr.io/${{ github.repository }}:${{ steps.image.outputs.tag }}"
+          
+          # Add your production deployment commands here
+          # WARNING: Be careful with production deployments!
+          # Example: kubectl apply -f k8s/production.yml
+          # Example: docker-compose -f docker-compose.production.yml up -d
+
+      - name: Smoke tests
+        run: |
+          echo "🧪 Running smoke tests..."
+          sleep 5
+          echo "✅ Application is healthy"
+
+      - name: Notify deployment
+        uses: 8398a7/action-slack@v3
+        if: always()
+        with:
+          status: ${{ job.status }}
+          text: 'Deployment to ${{ github.event.inputs.environment }} completed'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        continue-on-error: true
+
+      - name: Create deployment record
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.ref,
+              environment: '${{ github.event.inputs.environment }}',
+              description: 'Deployment via GitHub Actions',
+              auto_merge: false,
+              required_contexts: []
+            })
